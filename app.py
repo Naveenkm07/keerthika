@@ -1,145 +1,207 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from __future__ import annotations
+
+import os
 import pickle
+import re
 import string
-import nltk
-from nltk.stem import PorterStemmer
+from pathlib import Path
+from typing import Any
+
 import mysql.connector
+from dotenv import load_dotenv
+from flask import Flask, flash, redirect, render_template, request, session, url_for
+from mysql.connector import Error
+from nltk.stem import PorterStemmer
 
 
-app = Flask(__name__)
-app.secret_key = '1c8073775dbc85a92ce20ebd44fd6a4fd832078f59ef16ec'  # Replace with a secure secret key
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "model.pkl"
+VECTORIZER_PATH = BASE_DIR / "vectorizer.pkl"
+
+load_dotenv()
 
 ps = PorterStemmer()
-tfidf = pickle.load(open('vectorizer.pkl', 'rb'))
-model = pickle.load(open('model.pkl', 'rb'))
+TOKEN_PATTERN = re.compile(r"\b\w+\b")
 
-nltk.download('punkt')
 
-def transform_text(text):
+def load_pickle(path: Path) -> Any:
+    with path.open("rb") as file:
+        return pickle.load(file)
+
+
+tfidf = load_pickle(VECTORIZER_PATH)
+model = load_pickle(MODEL_PATH)
+
+
+def create_app() -> Flask:
+    app = Flask(__name__, static_folder="static", template_folder="templates")
+    app.secret_key = os.environ.get(
+        "FLASK_SECRET_KEY",
+        "1c8073775dbc85a92ce20ebd44fd6a4fd832078f59ef16ec",
+    )
+    app.config["DB_CONFIG"] = {
+        "host": os.environ.get("DB_HOST", "localhost"),
+        "user": os.environ.get("DB_USER", "root"),
+        "password": os.environ.get("DB_PASSWORD", "2001"),
+        "database": os.environ.get("DB_NAME", "smc"),
+        "port": int(os.environ.get("DB_PORT", "3306")),
+    }
+    return app
+
+
+app = create_app()
+
+
+def transform_text(text: str) -> str:
     text = text.lower()
-    text = nltk.word_tokenize(text)
+    tokens = TOKEN_PATTERN.findall(text)
 
-    y = []
-    for i in text:
-        if i.isalnum():
-            y.append(i)
+    filtered_tokens = []
+    for token in tokens:
+        if token.isalnum() and token not in string.punctuation:
+            filtered_tokens.append(ps.stem(token))
 
-    text = y[:]
-    y.clear()
+    return " ".join(filtered_tokens)
 
-    for i in text:
-        if i not in string.punctuation:
-            y.append(i)
 
-    text = y[:]
-    y.clear()
+def get_db_connection():
+    try:
+        return mysql.connector.connect(**app.config["DB_CONFIG"])
+    except Error as ex:
+        app.logger.error("Database connection failed: %s", ex)
+        return None
 
-    for i in text:
-        y.append(ps.stem(i))
 
-    return " ".join(y)
-
-# Define your database connection
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="2001",
-    database="smc"
-)
-
-@app.route('/')
+@app.route("/")
 def home():
-    return render_template('home.html')
+    return render_template("home.html")
 
-@app.route('/about')
+
+@app.route("/about")
 def about():
-    return render_template('about.html')
+    return render_template("about.html")
 
-@app.route('/index')
+
+@app.route("/index")
 def index():
-    # Check if the 'user' session variable exists (i.e., the user is logged in)
-    if 'user' in session:
-        return render_template('index.html')
-    else:
-        return redirect(url_for('signin'))  # Redirect to the sign-in page if the user is not logged in
+    """Render the classification panel without requiring authentication."""
+    return render_template("index.html")
 
-@app.route('/predict', methods=['POST'])
+
+@app.route("/predict", methods=["POST"])
 def predict():
-    input_sms = request.form.get('message')
+    input_sms = request.form.get("message", "")
+    if not input_sms:
+        flash("Please provide a message to classify.", "error")
+        return redirect(url_for("index"))
+
     transformed_sms = transform_text(input_sms)
     vector_input = tfidf.transform([transformed_sms])
     result = model.predict(vector_input)[0]
-    if result == 1:
-        prediction = "Spam"
-    else:
-        prediction = "Not Spam"
-    return render_template('result.html', prediction=prediction)
+    prediction = "Spam" if result == 1 else "Not Spam"
+    return render_template("result.html", prediction=prediction)
 
-@app.route('/signin')
+
+@app.route("/signin")
 def signin():
-    if 'user' in session:
-        return redirect(url_for('index'))
-    return render_template('signin.html')
+    if "user" in session:
+        return redirect(url_for("index"))
+    return render_template("signin.html")
 
-@app.route('/signup', methods=['GET'])
+
+@app.route("/signup", methods=["GET"])
 def signup():
-    return render_template('signup.html')
+    return render_template("signup.html")
 
-@app.route('/register', methods=['POST'])
+
+@app.route("/register", methods=["POST"])
 def register():
-    if request.method == 'POST':
-        full_name = request.form['full_name']
-        username = request.form['username']
-        email = request.form['email']
-        phone = request.form['phone']
-        password = request.form['password']
+    full_name = request.form.get("full_name")
+    username = request.form.get("username")
+    email = request.form.get("email")
+    phone = request.form.get("phone")
+    password = request.form.get("password")
+    confirm_password = request.form.get("confirm_password")
 
-        # Ensure the password and confirm_password match
-        confirm_password = request.form['confirm_password']
-        if password != confirm_password:
-            return "Password and Confirm Password do not match."
+    if not all([full_name, username, email, phone, password, confirm_password]):
+        flash("All fields are required.", "error")
+        return redirect(url_for("signup"))
 
-        # Insert data into MySQL
-        cur = db.cursor()
-        cur.execute("INSERT INTO users (full_name, username, email, phone, password) VALUES (%s, %s, %s, %s, %s)",
-                    (full_name, username, email, phone, password))
-        db.commit()
-        cur.close()
+    if password != confirm_password:
+        flash("Password and Confirm Password do not match.", "error")
+        return redirect(url_for("signup"))
 
-        flash('Registration successful', 'success')
-        return redirect('/signin')
+    connection = get_db_connection()
+    if connection is None:
+        flash("Database connection is not configured.", "error")
+        return redirect(url_for("signup"))
 
-    return "Invalid request method"
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO users (full_name, username, email, phone, password)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (full_name, username, email, phone, password),
+        )
+        connection.commit()
+        flash("Registration successful", "success")
+        return redirect(url_for("signin"))
+    except Error as ex:
+        app.logger.error("Failed to register user: %s", ex)
+        flash("Registration failed. Please try again.", "error")
+        return redirect(url_for("signup"))
+    finally:
+        cursor.close()
+        connection.close()
 
-@app.route('/login', methods=['POST'])
+
+@app.route("/login", methods=["POST"])
 def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        remember_me = request.form.get('remember_me')  # Get the 'remember_me' checkbox value
+    email = request.form.get("email")
+    password = request.form.get("password")
+    remember_me = request.form.get("remember_me")
 
-        # Query the database to check if the email and password match
-        cur = db.cursor()
-        cur.execute("SELECT * FROM users WHERE email = %s AND password = %s", (email, password))
-        user = cur.fetchone()
-        cur.close()
+    if not email or not password:
+        flash("Email and password are required.", "error")
+        return redirect(url_for("signin"))
 
-        if user:
-            session['user'] = user
+    connection = get_db_connection()
+    if connection is None:
+        flash("Database connection is not configured.", "error")
+        return redirect(url_for("signin"))
 
-            if remember_me:
-                session.permanent = True
-            return redirect(url_for('index'))
-        else:
-            return "Login failed. Check your email and password."
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT * FROM users WHERE email = %s AND password = %s",
+            (email, password),
+        )
+        user = cursor.fetchone()
+    finally:
+        cursor.close()
+        connection.close()
 
-    return "Invalid request method"
+    if user:
+        session["user"] = {
+            "id": user["id"],
+            "full_name": user["full_name"],
+            "email": user["email"],
+        }
+        if remember_me:
+            session.permanent = True
+        return redirect(url_for("index"))
 
-@app.route('/logout')
+    flash("Login failed. Check your email and password.", "error")
+    return redirect(url_for("signin"))
+
+
+@app.route("/logout")
 def logout():
-    # Clear the user session to log out
-    session.pop('user', None)
-    return redirect(url_for('home'))  # Redirect to the sign-in page after logging out
+    session.pop("user", None)
+    return redirect(url_for("home"))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app.run(debug=True)

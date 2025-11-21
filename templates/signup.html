@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Finexo</title>
+    <title>NHCE</title>
     <link rel="shortcut icon" href="{{ url_for('static', filename='images/favicon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='signup.css') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,7 +14,7 @@
     <div class="container">
         <div class="title">Registration</div>
         <div class="content">
-            <form method="POST" action="/register" onsubmit="return validateForm()">
+            <form id="signupForm" novalidate>
                 <div class="user-details">
                     <div class="input-box">
                         <span class="details">Full Name</span>
@@ -23,7 +23,7 @@
                     </div>
                     <div class="input-box">
                         <span class="details">Username</span>
-                        <input type="text" name="username" id="username" placeholder="e.g. JohnDoe" required oninput="validateUsername()">
+                        <input type="text" name="username" id="username" placeholder="e.g. JohnDoe" required>
                         <span id="username-error" style="color: red;"></span>
                     </div>
                     <div class="input-box">
@@ -53,6 +53,7 @@
                 <div class="button">
                     <input type="submit" value="Register">
                 </div>
+                <p id="signup-message" class="status-message"></p>
                 <div class="signup-link">
                     <center>Already a member? <a href="/signin">LogIn now</a></center>
                 </div>
