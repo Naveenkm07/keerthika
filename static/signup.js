@@ -1,4 +1,3 @@
-const USERS_KEY = "nhceUsers";
 const signupForm = document.getElementById("signupForm");
 
 if (signupForm) {
@@ -15,7 +14,6 @@ if (signupForm) {
 
   const passwordToggle = document.getElementById("togglePassword");
   const confirmPasswordToggle = document.getElementById("toggleConfirmPassword");
-  const allowedDomains = ["gmail.com", "yahoo.com", "mail.com"];
 
   const showMessage = (message, isError = true) => {
     if (!statusMessage) return;
@@ -23,22 +21,9 @@ if (signupForm) {
     statusMessage.style.color = isError ? "#d32f2f" : "#2e7d32";
   };
 
-  const getStoredUsers = () => {
-    try {
-      return JSON.parse(localStorage.getItem(USERS_KEY)) || [];
-    } catch (error) {
-      console.warn("Unable to parse stored users", error);
-      return [];
-    }
-  };
-
-  const saveUsers = (users) => {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  };
-
   const isValidEmail = (email) => {
-    const domain = email.split("@")[1];
-    return domain ? allowedDomains.includes(domain) : false;
+    const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    return emailPattern.test(email.toLowerCase());
   };
 
   const hasNumber = (value) => /\d/.test(value);
@@ -91,7 +76,6 @@ if (signupForm) {
   });
 
   signupForm.addEventListener("submit", (event) => {
-    event.preventDefault();
     showMessage("");
 
     const fullName = fullNameInput.value.trim();
@@ -115,31 +99,15 @@ if (signupForm) {
 
     if (password !== confirmPassword) {
       showMessage("Password and Confirm Password must match.");
+      event.preventDefault();
       return;
     }
 
-    const users = getStoredUsers();
-    const emailExists = users.some((user) => user.email === email);
-    const usernameExists = users.some((user) => user.username === username);
-
-    if (emailExists) {
-      showMessage("An account with this email already exists.");
+    if (password.length < 8) {
+      showMessage("Password must be at least 8 characters long.");
+      event.preventDefault();
       return;
     }
-
-    if (usernameExists) {
-      showMessage("Username already taken. Please choose another.");
-      return;
-    }
-
-    users.push({ fullName, username, email, phone, password });
-    saveUsers(users);
-
-    showMessage("Registration successful! Redirecting to login…", false);
-    signupForm.reset();
-    setTimeout(() => {
-      window.location.href = "/signin";
-    }, 1500);
   });
 }
 
